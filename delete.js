@@ -1,5 +1,6 @@
 var API             = require('ep_etherpad-lite/node/db/API'),
   padManager        = require('ep_etherpad-lite/node/db/PadManager'),
+  pad               = require('ep_etherpad-lite/node/db/Pad'),
   padMessageHandler = require('ep_etherpad-lite/node/handler/PadMessageHandler'),
   settings          = require('ep_etherpad-lite/node/utils/Settings'),
   async             = require('ep_etherpad-lite/node_modules/async'),
@@ -11,9 +12,6 @@ const logger = log4js.getLogger('ep_delete_after_delay');
 var epVersion = parseFloat(require('ep_etherpad-lite/package.json').version);
 var usePromises = epVersion >= 1.8
 var getHTML, getPad, listAllPads, doesPadExist;
-
-
-var removePad = padManager.removePad
 
 if (usePromises) {
   getHTML = callbackify2(API.getHTML)
@@ -77,37 +75,35 @@ if (loop) {
 // deletion loop
 function delete_old_pads() {
     // Deletion queue (avoids max stack size error), 2 workers
-    var q = async.queue(function (pad, callback) {
-        getHTML(pad.id, undefined, function(err, d) {
-            if (err) {
-                return callback(err);
-            }
-            var currentTime = (new Date).getTime();
-            var a = pad.id.substr(0,1);
-            if (!fs.existsSync('deleted_pads/'+a)) {
-                fs.mkdirSync('deleted_pads/'+a, { recursive: true });
-            }
-            var path = 'deleted_pads/'+a+'/'+pad.id+'-'+currentTime+'.html';
-            if (pad.id.length > 1) {
-                var b = pad.id.substr(1,1);
-                if (!fs.existsSync('deleted_pads/'+a+'/'+b)) {
-                    fs.mkdirSync('deleted_pads/'+a+'/'+b, { recursive: true });
-                }
-                path = 'deleted_pads/'+a+'/'+b+'/'+pad.id+'-'+currentTime+'.html';
-                if (pad.id.length > 2) {
-                    var c = pad.id.substr(2,1);
-                    if (!fs.existsSync('deleted_pads/'+a+'/'+b+'/'+c)) {
-                        fs.mkdirSync('deleted_pads/'+a+'/'+b+'/'+c, { recursive: true });
-                    }
-                    path = 'deleted_pads/'+a+'/'+b+'/'+c+'/'+pad.id+'-'+currentTime+'.html';
+    var q = async.queue(function ({pad, timestamp}, _callback) {
+      pad.remove()
+
+      logger.info('Pad '+pad.id+' deleted since expired (delay: '+delay+' seconds, last edition: '+timestamp+').');
+      // Create new pad with an explanation
+      getPad(pad.id, replaceText, function() {
+        // Create disconnect message
+        var msg = {
+            type: "COLLABROOM",
+            data: {
+                type: "CUSTOM",
+                payload: {
+                    authorId: null,
+                    action: "requestRECONNECT",
+                    padId: pad.id
                 }
             }
-            fs.writeFile(path, d.html, function(err) {
-                var remove = getRemoveFun(pad)
-                remove(callback);
-            });
+        };
+        // Send disconnect message to all clients
+        var sessions = padMessageHandler.sessioninfos;
+        Object.keys(sessions).forEach(function(key){
+          var session = sessions[key];
+          padMessageHandler.handleCustomObjectMessage(msg, false, function(){
+              // TODO: Error handling
+          }); // Send a message to this session
         });
+      });
     }, 2);
+    
     // Emptyness test queue
     var p = async.queue(function(padId, callback) {
         getPad(padId, null, function(err, pad) {
@@ -123,32 +119,7 @@ function delete_old_pads() {
                         if ((currentTime - timestamp) > (delay * 1000)) {
                             logger.debug('Pushing %s to q queue', pad.id);
                             // Remove pad
-                            q.push(pad, function (err) {
-                                logger.info('Pad '+pad.id+' deleted since expired (delay: '+delay+' seconds, last edition: '+timestamp+').');
-                                // Create new pad with an explanation
-                                getPad(padId, replaceText, function() {
-                                    // Create disconnect message
-                                    var msg = {
-                                        type: "COLLABROOM",
-                                        data: {
-                                            type: "CUSTOM",
-                                            payload: {
-                                                authorId: null,
-                                                action: "requestRECONNECT",
-                                                padId: padId
-                                            }
-                                        }
-                                    };
-                                    // Send disconnect message to all clients
-                                    var sessions = padMessageHandler.sessioninfos;
-                                    Object.keys(sessions).forEach(function(key){
-                                        var session = sessions[key];
-                                        padMessageHandler.handleCustomObjectMessage(msg, false, function(){
-                                            // TODO: Error handling
-                                        }); // Send a message to this session
-                                    });
-                                });
-                            });
+                            q.push({pad, timestamp});
                         } else {
                             logger.debug('Nothing to do with '+padId+' (not expired)');
                         }
@@ -174,86 +145,6 @@ exports.eejsBlock_styles = function (hook, context, cb) {
     context.content = context.content + '<link rel="stylesheet" type="text/css" href="../static/plugins/ep_delete_after_delay/static/css/reconnect.css"></link>';
     return cb();
 }
-
-exports.handleMessage = function(hook_name, {message, socket}, cb) {
-    if (areParamsOk === false) return false;
-
-    var type = message.type;
-    if (type === 'CLIENT_READY' || type === 'COLLABROOM') {
-        var padId = (type === 'CLIENT_READY')
-          ? message.padId :
-          Object.keys(socket.rooms)[1];
-
-        getPad(padId, null, function(callback, pad) {
-
-            // If this is a new pad, there's nothing to do
-            if (pad.getHeadRevisionNumber() !== 0) {
-                var getLastEdit = getLastEditFun(pad)
-
-                getLastEdit(function(callback, timestamp) {
-                    if (timestamp !== undefined && timestamp !== null) {
-                        var currentTime = (new Date).getTime();
-
-                        // Are we over delay?
-                        if ((currentTime - timestamp) > (delay * 1000)) {
-
-                            getHTML(padId, undefined, function(err, d) {
-                                if (err) {
-                                    return cb(err);
-                                }
-                                fs.writeFile('deleted_pads/'+padId+'-'+currentTime+'.html', d.html, function(err) {
-                                    if (err) {
-                                        return cb(err);
-                                    }
-                                    // Remove pad
-                                    removePad(padId);
-                                    logger.info('Pad '+padId+' deleted since expired (delay: '+delay+' seconds, last edition: '+timestamp+').');
-
-                                    // Create new pad with an explanation
-                                    getPad(padId, replaceText, function() {
-                                        // Create disconnect message
-                                        var msg = {
-                                            type: "COLLABROOM",
-                                            data: {
-                                                type: "CUSTOM",
-                                                payload: {
-                                                    authorId: message.authorId,
-                                                    action: "requestRECONNECT",
-                                                    padId: padId
-                                                }
-                                            }
-                                        };
-                                        // Send disconnect message to all clients
-                                        var sessions = padMessageHandler.sessioninfos;
-                                        Object.keys(sessions).forEach(function(key){
-                                            var session = sessions[key];
-                                            padMessageHandler.handleCustomObjectMessage(msg, false, function(){
-                                                // TODO: Error handling
-                                            }); // Send a message to this session
-                                        });
-                                        if (type === 'COLLABROOM') {
-                                            cb(null);
-                                        } else {
-                                            cb();
-                                        }
-                                    });
-                                });
-                            });
-                        } else {
-                            logger.debug('Nothing to do with '+padId+' (not expired)');
-                            cb();
-                        }
-                    }
-                });
-            } else {
-                logger.info('New or empty pad '+padId);
-                cb()
-            }
-        });
-    } else {
-        cb();
-    }
-};
 
 exports.registerRoute  = function (hook_name, args, cb) {
     args.app.get('/ttl/:pad', function(req, res, next) {
@@ -316,16 +207,6 @@ function callbackify2 (fun) {
 
 function getLastEditFun (pad) {
   var fun = pad.getLastEdit.bind(pad)
-
-  if (usePromises) {
-    return callbackify0(fun)
-  }
-
-  return fun
-}
-
-function getRemoveFun (pad) {
-  var fun = pad.remove.bind(pad)
 
   if (usePromises) {
     return callbackify0(fun)
