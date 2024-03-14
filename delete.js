@@ -71,6 +71,7 @@ var p = async.queue(function(padId, callback) {
         } else {
             logger.debug('New or empty pad '+padId);
         }
+        padManager.unloadPad(padId)
         callback();
     });
 }, 2);
