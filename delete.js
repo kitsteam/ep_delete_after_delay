@@ -1,6 +1,6 @@
 var padManager      = require('ep_etherpad-lite/node/db/PadManager'),
   settings          = require('ep_etherpad-lite/node/utils/Settings'),
-  async             = require('ep_etherpad-lite/node_modules/async'),
+  async             = require('ep_etherpad-lite/node_modules/async');
 
 const log4js = require('ep_etherpad-lite/node_modules/log4js');
 const logger = log4js.getLogger('ep_delete_after_delay');
@@ -49,6 +49,32 @@ var waitForIt = function() {
     }, loopDelay * 1000);
 };
 
+var p = async.queue(function(padId, callback) {
+    getPad(padId, null, function(_err, pad) {
+        // If this is a new pad, there's nothing to do
+        var head = pad.getHeadRevisionNumber();
+        if (head !== null  && head !== undefined && head !== 0) {
+            var getLastEdit = getLastEditFun(pad)
+
+            getLastEdit(function(_callback, timestamp) {
+                if (timestamp !== undefined && timestamp !== null) {
+                    var currentTime = (new Date).getTime();
+                    // Are we over delay?
+                    if ((currentTime - timestamp) > (delay * 1000)) {
+                        pad.remove()
+                        logger.info('Pad '+pad.id+' deleted since expired (delay: '+delay+' seconds, last edition: '+timestamp+').');
+                    } else {
+                        logger.debug('Nothing to do with '+padId+' (not expired)');
+                    }
+                }
+            });
+        } else {
+            logger.debug('New or empty pad '+padId);
+        }
+        callback();
+    });
+}, 2);
+
 // Delete old pads at startup
 if (deleteAtStart) {
     delete_old_pads();
@@ -60,56 +86,7 @@ if (loop) {
 }
 
 // deletion loop
-function delete_old_pads() {
-    // Deletion queue (avoids max stack size error), 2 workers
-    var q = async.queue(function ({pad, timestamp}, _callback) {
-      pad.remove()
-
-      logger.info('Pad '+pad.id+' deleted since expired (delay: '+delay+' seconds, last edition: '+timestamp+').');
-      // Create new pad with an explanation
-      getPad(pad.id, replaceText, function() {
-        // Create disconnect message
-        var msg = {
-            type: "COLLABROOM",
-            data: {
-                type: "CUSTOM",
-                payload: {
-                    authorId: null,
-                    action: "requestRECONNECT",
-                    padId: pad.id
-                }
-            }
-        };
-      });
-    }, 2);
-    
-    // Emptyness test queue
-    var p = async.queue(function(padId, callback) {
-        getPad(padId, null, function(err, pad) {
-            // If this is a new pad, there's nothing to do
-            var head = pad.getHeadRevisionNumber();
-            if (head !== null  && head !== undefined && head !== 0) {
-              var getLastEdit = getLastEditFun(pad)
-
-              getLastEdit(function(_callback, timestamp) {
-                    if (timestamp !== undefined && timestamp !== null) {
-                        var currentTime = (new Date).getTime();
-                        // Are we over delay?
-                        if ((currentTime - timestamp) > (delay * 1000)) {
-                            logger.debug('Pushing %s to q queue', pad.id);
-                            // Remove pad
-                            q.push({pad, timestamp});
-                        } else {
-                            logger.debug('Nothing to do with '+padId+' (not expired)');
-                        }
-                    }
-                });
-            } else {
-                logger.debug('New or empty pad '+padId);
-            }
-            callback();
-        });
-    }, 1);
+function delete_old_pads() {    
     listAllPads(function (_err, data) {
         for (var i = 0; i < data.padIDs.length; i++) {
             var padId = data.padIDs[i];
