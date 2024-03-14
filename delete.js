@@ -1,35 +1,22 @@
-var API             = require('ep_etherpad-lite/node/db/API'),
-  padManager        = require('ep_etherpad-lite/node/db/PadManager'),
-  pad               = require('ep_etherpad-lite/node/db/Pad'),
-  padMessageHandler = require('ep_etherpad-lite/node/handler/PadMessageHandler'),
+var padManager      = require('ep_etherpad-lite/node/db/PadManager'),
   settings          = require('ep_etherpad-lite/node/utils/Settings'),
   async             = require('ep_etherpad-lite/node_modules/async'),
-  fs                = require('fs');
 
 const log4js = require('ep_etherpad-lite/node_modules/log4js');
 const logger = log4js.getLogger('ep_delete_after_delay');
 
 var epVersion = parseFloat(require('ep_etherpad-lite/package.json').version);
 var usePromises = epVersion >= 1.8
-var getHTML, getPad, listAllPads, doesPadExist;
+var getPad, listAllPads, doesPadExist;
 
 if (usePromises) {
-  getHTML = callbackify2(API.getHTML)
-
   getPad = callbackify2(padManager.getPad)
   listAllPads = callbackify0(padManager.listAllPads)
   doesPadExist = callbackify1(padManager.doesPadExist);
 } else {
-  getHTML = API.getHTML
-
   getPad = padManager.getPad
   listAllPads = padManager.listAllPads
   doesPadExist = padManager.doesPadExist;
-}
-
-
-if (!fs.existsSync('deleted_pads')) {
-    fs.mkdirSync('deleted_pads');
 }
 
 // Get settings
@@ -93,14 +80,6 @@ function delete_old_pads() {
                 }
             }
         };
-        // Send disconnect message to all clients
-        var sessions = padMessageHandler.sessioninfos;
-        Object.keys(sessions).forEach(function(key){
-          var session = sessions[key];
-          padMessageHandler.handleCustomObjectMessage(msg, false, function(){
-              // TODO: Error handling
-          }); // Send a message to this session
-        });
       });
     }, 2);
     
@@ -112,7 +91,7 @@ function delete_old_pads() {
             if (head !== null  && head !== undefined && head !== 0) {
               var getLastEdit = getLastEditFun(pad)
 
-              getLastEdit(function(callback, timestamp) {
+              getLastEdit(function(_callback, timestamp) {
                     if (timestamp !== undefined && timestamp !== null) {
                         var currentTime = (new Date).getTime();
                         // Are we over delay?
@@ -131,22 +110,22 @@ function delete_old_pads() {
             callback();
         });
     }, 1);
-    listAllPads(function (err, data) {
+    listAllPads(function (_err, data) {
         for (var i = 0; i < data.padIDs.length; i++) {
             var padId = data.padIDs[i];
             logger.debug('Pushing %s to p queue', padId);
-            p.push(padId, function (err) { });
+            p.push(padId, function (_err) { });
         }
     });
 }
 
 // Add CSS
-exports.eejsBlock_styles = function (hook, context, cb) {
+exports.eejsBlock_styles = function (_hook, context, cb) {
     context.content = context.content + '<link rel="stylesheet" type="text/css" href="../static/plugins/ep_delete_after_delay/static/css/reconnect.css"></link>';
     return cb();
 }
 
-exports.registerRoute  = function (hook_name, args, cb) {
+exports.registerRoute  = function (_hook_name, args, cb) {
     args.app.get('/ttl/:pad', function(req, res, next) {
         var padId = req.params.pad;
 
@@ -163,7 +142,7 @@ exports.registerRoute  = function (hook_name, args, cb) {
                     if (pad.getHeadRevisionNumber() !== 0) {
                       var getLastEdit = getLastEditFun(pad)
 
-                      getLastEdit(function(callback, timestamp) {
+                      getLastEdit(function(_callback, timestamp) {
                             if (timestamp !== undefined && timestamp !== null) {
                                 var currentTime = (new Date).getTime();
 
