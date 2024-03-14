@@ -103,17 +103,17 @@ exports.eejsBlock_styles = function (_hook, context, cb) {
 }
 
 exports.registerRoute  = function (_hook_name, args, cb) {
-    args.app.get('/ttl/:pad', function(req, res, next) {
+    args.app.get('/ttl/:pad', function(req, res, _next) {
         var padId = req.params.pad;
 
         res.header("Access-Control-Allow-Origin", "*");
         res.setHeader('Content-Type', 'application/json');
 
-        doesPadExist(padId, function(callback, doesExist) {
+        doesPadExist(padId, function(_callback, doesExist) {
             if (doesExist === false) {
                 res.send('{"ttl": null, "msg": "Empty pad"}');
             } else {
-                getPad(padId, null, function(callback, pad) {
+                getPad(padId, null, function(_callback, pad) {
 
                     // If this is a new pad, there's nothing to do
                     if (pad.getHeadRevisionNumber() !== 0) {
