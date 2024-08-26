@@ -1,4 +1,3 @@
-var already_notified = false;
 var delay;
 
 function get_ttl(callback) {
@@ -6,7 +5,7 @@ function get_ttl(callback) {
         url: '../ttl/'+window.location.pathname.replace(/.*\/p\//, ''),
         method: 'GET',
         dataType: 'json',
-        success: function(data, textStatus, jqXHR) {
+        success: function(data, _textStatus, _jqXHR) {
             $('.ttl').remove();
             if (data.ttl === null) {
                 delay = 1000;
@@ -14,15 +13,15 @@ function get_ttl(callback) {
             if (data.ttl !== null && data.ttl > 0) {
                 var text, ttl;
                 if (data.ttl > 3600 * 24) {
-                    text  = window._('ep_delete_after_delay.days');
+                    text  = html10n.get('ep_delete_after_delay.days');
                     ttl   = data.ttl/(3600 * 24);
                     delay = 3500 * 1000;
                 } else if (data.ttl > 3600) {
-                    text  = window._('ep_delete_after_delay.hours');
+                    text  = html10n.get('ep_delete_after_delay.hours');
                     ttl   = data.ttl/3600;
                     delay = 1800 * 1000; // 30 minutes
                 } else {
-                    text  = window._('ep_delete_after_delay.minutes');
+                    text  = html10n.get('ep_delete_after_delay.minutes');
                     ttl   = data.ttl/60;
                     delay = 600 * 1000 // 10 minutes
                 }
@@ -30,8 +29,8 @@ function get_ttl(callback) {
                 text = text.replace(/XXXX/, ttl);
                 $.gritter.add({
                     class_name: 'ttl',
-                    title: window._('ep_delete_after_delay.close'),
-                    text: text+' '+window._('ep_delete_after_delay.suggest'),
+                    title: html10n.get('ep_delete_after_delay.close'),
+                    text: text+' '+ html10n.get('ep_delete_after_delay.suggest'),
                     sticky: true,
                     position: 'bottom'
                 });
